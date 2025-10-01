@@ -1,0 +1,18 @@
+# Checken of mininet en python daadwerkelijk runnen
+mn -- version
+python3 --version
+
+# Check je NAT en Host-only adapter IP adressen
+ip addr show
+
+# Voor SSH: Voeg het 192.x.x.x adres toe aan je host bestand op je host pc. Connect met putty aan je VM
+
+# NAT Interface activeren
+sudo dhclient eth1
+# Permanent activeren
+sudo nano /etc/netplan/01-netcfg.yaml
+# Voeg toe:
+  eth1:
+    dhcp4: yes
+# config toepassen
+sudo netplan apply
