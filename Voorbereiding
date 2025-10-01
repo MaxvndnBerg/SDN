@@ -1,17 +1,18 @@
-echo "==> Checken of mininet en python daadwerkelijk draaien"
+# Checken of mininet en python daadwerkelijk draaien
 mn -- version
 python3 --version
 
-echo "==> Check je NAT en Host-only adapter IP adressen"
+# Check je NAT en Host-only adapter IP adressen
 ip addr show
 
-echo "==> Voor SSH: Voeg het 192.x.x.x adres toe aan je host bestand op je host pc. Connect met putty aan je VM"
+# Voor SSH: Voeg het 192.x.x.x adres toe aan je host bestand op je host pc. Connect met putty aan je VM
 
-echo "==> NAT Interface activeren"
+# NAT Interface activeren
 sudo dhclient eth1
-echo "==> Permanent activeren"
+# Permanent activeren 
 sudo nano /etc/netplan/01-netcfg.yaml
-echo "==> Voeg toe:"
+# Voeg toe
   eth1:
-echo "==> config toepassen"
+    dchp4: yes
+# config toepassen
 sudo netplan apply
