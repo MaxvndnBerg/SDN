@@ -1,0 +1,60 @@
+vlans:
+  vlan10: { vid: 10, description: "Employee" }
+  vlan20: { vid: 20, description: "Guest" }
+  vlan30: { vid: 30, description: "Management" }
+
+dps:
+  s1:
+    dp_id: 0x0000000000000001
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "to s3",             tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "to s4",             tagged_vlans: [vlan10, vlan20, vlan30] }
+      3: { description: "to s2 (darkfiber)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      4: { description: "ctrlA",             native_vlan:  vlan30 }
+
+  s2:
+    dp_id: 0x0000000000000002
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "to s5",             tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "to s6",             tagged_vlans: [vlan10, vlan20, vlan30] }
+      3: { description: "to s7",             tagged_vlans: [vlan10, vlan20, vlan30] }
+      4: { description: "to s1 (darkfiber)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      5: { description: "ctrlB",             native_vlan:  vlan30 }
+
+  s3:
+    dp_id: 0x0000000000000003
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "to s1",         tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h1 employee",   native_vlan:  vlan10 }
+      3: { description: "h2 guest",      native_vlan:  vlan20 }
+
+  s4:
+    dp_id: 0x0000000000000004
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "to s1",         tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h3 management", native_vlan:  vlan30 }
+
+  s5:
+    dp_id: 0x0000000000000005
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "to s2",         tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h4 employee",   native_vlan:  vlan10 }
+
+  s6:
+    dp_id: 0x0000000000000006
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "to s2",       tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h5 guest",    native_vlan:  vlan20 }
+
+  s7:
+    dp_id: 0x0000000000000007
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "to s2",         tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h6 management", native_vlan:  vlan30 }
