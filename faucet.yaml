@@ -3,58 +3,86 @@ vlans:
   vlan20: { vid: 20, description: "Guest" }
   vlan30: { vid: 30, description: "Management" }
 
+# --- Meter voor ACL rate limiting (10 Mbit/s) ---
+meters:
+  guest_10m:
+    meter_id: 1
+    entry:
+      flags: [KBPS, BURST]
+      bands:
+        - type: DROP
+          rate: 10000         # 10 Mbit/s
+          burst_size: 1000
+
+# --- ACLs ---
+acls:
+  # Port security op VLAN30 (alleen h3/h6 toegestaan) — MACs van jouw hosts
+  mngt_acl:
+    - rule: { eth_src: "b2:be:ec:10:f8:d3", actions: { allow: true } }  # h3
+    - rule: { eth_src: "1e:f0:bf:48:c8:57", actions: { allow: true } }  # h6
+    - rule: { actions: { allow: false } }                                # alles anders blokkeren
+
+  # Guest rate limit — nu met 'catch-all allow' zodat andere VLANs niet geblokkeerd worden
+  guest_rl:
+    - rule:
+        vlan_vid: 20
+        actions: { meter: guest_10m, allow: true }
+    - rule:
+        actions: { allow: true }   # alles wat geen VLAN20 is: doorlaten
+
 dps:
   s1:
     dp_id: 0x0000000000000001
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s3",             tagged_vlans: [vlan10, vlan20, vlan30] }
-      2: { description: "to s4",             tagged_vlans: [vlan10, vlan20, vlan30] }
-      3: { description: "to s2 (darkfiber)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      # trunks naar access & darkfiber naar s2: ACL toepassen voor VLAN20-limiet
+      1: { description: "to s3",             tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
+      2: { description: "to s4",             tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
+      3: { description: "to s2 (darkfiber)", tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
       4: { description: "ctrlA",             native_vlan:  vlan30 }
 
   s2:
     dp_id: 0x0000000000000002
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s5",             tagged_vlans: [vlan10, vlan20, vlan30] }
-      2: { description: "to s6",             tagged_vlans: [vlan10, vlan20, vlan30] }
-      3: { description: "to s7",             tagged_vlans: [vlan10, vlan20, vlan30] }
-      4: { description: "to s1 (darkfiber)", tagged_vlans: [vlan10, vlan20, vlan30] }
-      5: { description: "ctrlB",             native_vlan:  vlan30 }
+      1: { description: "to s5", tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
+      2: { description: "to s6", tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
+      3: { description: "to s7", tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
+      4: { description: "to s1 (darkfiber)", tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
+      5: { description: "ctrlB", native_vlan:  vlan30 }
 
-  s3:
+  s3:   # A1 access
     dp_id: 0x0000000000000003
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s1",         tagged_vlans: [vlan10, vlan20, vlan30] }
-      2: { description: "h1 employee",   native_vlan:  vlan10 }
-      3: { description: "h2 guest",      native_vlan:  vlan20 }
+      1: { description: "to s1",         tagged_vlans: [vlan10, vlan20, vlan30] }            # trunk
+      2: { description: "h1 employee",   native_vlan:  vlan10 }                               # host
+      3: { description: "h2 guest",      native_vlan:  vlan20, acls_in: [guest_rl] }          # host + ACL
 
-  s4:
+  s4:   # A2 access (management)
     dp_id: 0x0000000000000004
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s1",         tagged_vlans: [vlan10, vlan20, vlan30] }
-      2: { description: "h3 management", native_vlan:  vlan30 }
+      1: { description: "to s1",         tagged_vlans: [vlan10, vlan20, vlan30] }            # trunk
+      2: { description: "h3 management", native_vlan:  vlan30, acls_in: [mngt_acl] }         # ACL mgmt
 
-  s5:
+  s5:   # B1 access
     dp_id: 0x0000000000000005
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s2",         tagged_vlans: [vlan10, vlan20, vlan30] }
+      1: { description: "to s2",         tagged_vlans: [vlan10, vlan20, vlan30] }            # trunk
       2: { description: "h4 employee",   native_vlan:  vlan10 }
 
-  s6:
+  s6:   # B2 access
     dp_id: 0x0000000000000006
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s2",       tagged_vlans: [vlan10, vlan20, vlan30] }
-      2: { description: "h5 guest",    native_vlan:  vlan20 }
+      1: { description: "to s2",       tagged_vlans: [vlan10, vlan20, vlan30] }              # trunk
+      2: { description: "h5 guest",    native_vlan:  vlan20, acls_in: [guest_rl] }           # host + ACL
 
-  s7:
+  s7:   # B3 access (management)
     dp_id: 0x0000000000000007
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s2",         tagged_vlans: [vlan10, vlan20, vlan30] }
-      2: { description: "h6 management", native_vlan:  vlan30 }
+      1: { description: "to s2",         tagged_vlans: [vlan10, vlan20, vlan30] }            # trunk
+      2: { description: "h6 management", native_vlan:  vlan30, acls_in: [mngt_acl] }         # ACL mgmt
