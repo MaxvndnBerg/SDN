@@ -76,51 +76,72 @@ class SDNTopo(Topo):
 
 def run():
     topo = SDNTopo()
-    net = Mininet(
-        topo=topo,
-        switch=OVSSwitch,
-        build=False,
-        controller=None
-    )
+    net = Mininet(topo=topo, switch=OVSSwitch, build=False, controller=None)
 
-    # -- EÃ©n remote controller (Faucet) --
-    c0 = net.addController('c0',
-                           controller=RemoteController,
-                           ip='127.0.0.1', port=6653)
-
+    c0 = net.addController('c0', controller=RemoteController, ip='127.0.0.1', port=6653)
     net.build()
     net.start()
 
-    # -- Controllers & OpenFlow13 hard fixen na start (op alle bridges) --
-    bridges = ['s1', 's2', 's3', 's4', 's5', 's6', 's7']
-    for b in bridges:
-        quietRun(f'ovs-vsctl del-controller {b}')
-        quietRun(f'ovs-vsctl set-controller {b} tcp:127.0.0.1:6653')
-        quietRun(f'ovs-vsctl set-fail-mode {b} secure')
-        quietRun(f'ovs-vsctl set bridge {b} protocols=OpenFlow13')
-    print('*** Controllers gefixeerd: alleen 127.0.0.1:6653 en OpenFlow13 op alle bridges.')
+    # Forceer OpenFlow13 en één controller
+    for s in ['s1','s2','s3','s4','s5','s6','s7']:
+        quietRun(f'ovs-vsctl del-controller {s}')
+        quietRun(f'ovs-vsctl set-controller {s} tcp:127.0.0.1:6653')
+        quietRun(f'ovs-vsctl set-fail-mode {s} secure')
+        quietRun(f'ovs-vsctl set bridge {s} protocols=OpenFlow13')
 
-    # -- Info: bevestig vaste MACs voor ACL (h3 & h6) --
-    mac_h3 = quietRun('cat /sys/class/net/h3-eth0/address').strip()
-    mac_h6 = quietRun('cat /sys/class/net/h6-eth0/address').strip()
-    print(f'*** MAC h3 = {mac_h3}  (verwacht: b2:be:ec:10:f8:d3)')
-    print(f'*** MAC h6 = {mac_h6}  (verwacht: 1e:f0:bf:48:c8:57)')
+    # -------- NAT configureren (edgeA als router) --------
+    edgeA = net.get('edgeA')
+    isp0 = net.get('isp0')
 
-    # -- Optioneel: oud port-policing voor guests (UITGESCHAKELD) --
-    enable_port_policing = False  # laat False; je gebruikt nu ACL+meter in YAML
-    if enable_port_policing:
-        guest_ports = ['s3-eth3', 's6-eth2']  # h2 en h5
-        rate_kbps = 10000
-        burst_kb = 1000
-        for intf in guest_ports:
-            quietRun(f'ovs-vsctl set interface {intf} '
-                     f'ingress_policing_rate={rate_kbps} '
-                     f'ingress_policing_burst={burst_kb}')
-            applied = quietRun(f'ovs-vsctl get interface {intf} ingress_policing_rate').strip()
-            print(f'*** Guest rate limit (policing) op {intf}: {applied} kbps')
+    # Publieke kant (ISP simulatie)
+    isp0.cmd('ip addr flush dev isp0-eth0')
+    isp0.cmd('ip addr add 203.0.113.1/28 dev isp0-eth0')
+    isp0.cmd('ip link set isp0-eth0 up')
 
-    print('*** Netwerk is gestart ***')
-    print('*** Tip: test VLAN pings (h1<->h4, h2<->h5, h3<->h6). Voor guest throughput: iperf3 h5<-h2 ***')
+    edgeA.cmd('ip addr flush dev edgeA-eth1')
+    edgeA.cmd('ip addr add 203.0.113.2/28 dev edgeA-eth1')
+    edgeA.cmd('ip link set edgeA-eth1 up')
+    edgeA.cmd('ip route add default via 203.0.113.1')
+
+    # Interne kant (VLAN’s 10/20/30)
+    edgeA.cmd('ip link add link edgeA-eth2 name edgeA-eth2.10 type vlan id 10')
+    edgeA.cmd('ip link add link edgeA-eth2 name edgeA-eth2.20 type vlan id 20')
+    edgeA.cmd('ip link add link edgeA-eth2 name edgeA-eth2.30 type vlan id 30')
+    edgeA.cmd('ip addr add 10.0.10.254/24 dev edgeA-eth2.10')
+    edgeA.cmd('ip addr add 10.0.20.254/24 dev edgeA-eth2.20')
+    edgeA.cmd('ip addr add 10.0.30.254/24 dev edgeA-eth2.30')
+    edgeA.cmd('ip link set edgeA-eth2 up')
+    edgeA.cmd('ip link set edgeA-eth2.10 up')
+    edgeA.cmd('ip link set edgeA-eth2.20 up')
+    edgeA.cmd('ip link set edgeA-eth2.30 up')
+
+    # IP forwarding + iptables NAT
+    edgeA.cmd('sysctl -w net.ipv4.ip_forward=1')
+    edgeA.cmd('iptables -t nat -F')
+    edgeA.cmd('iptables -F')
+    edgeA.cmd('iptables -P FORWARD DROP')
+    edgeA.cmd('iptables -A FORWARD -i edgeA-eth1 -o edgeA-eth2.10 -m state --state RELATED,ESTABLISHED -j ACCEPT')
+    edgeA.cmd('iptables -A FORWARD -i edgeA-eth1 -o edgeA-eth2.20 -m state --state RELATED,ESTABLISHED -j ACCEPT')
+    edgeA.cmd('iptables -A FORWARD -i edgeA-eth1 -o edgeA-eth2.30 -m state --state RELATED,ESTABLISHED -j ACCEPT')
+    edgeA.cmd('iptables -A FORWARD -i edgeA-eth2.10 -o edgeA-eth1 -j ACCEPT')
+    edgeA.cmd('iptables -A FORWARD -i edgeA-eth2.20 -o edgeA-eth1 -j ACCEPT')
+    edgeA.cmd('iptables -A FORWARD -i edgeA-eth2.30 -o edgeA-eth1 -j ACCEPT')
+    edgeA.cmd('iptables -t nat -A POSTROUTING -o edgeA-eth1 -j MASQUERADE')
+
+    # Default gateways per VLAN
+    net.get('h1').cmd('ip route add default via 10.0.10.254')
+    net.get('h4').cmd('ip route add default via 10.0.10.254')
+    net.get('h2').cmd('ip route add default via 10.0.20.254')
+    net.get('h5').cmd('ip route add default via 10.0.20.254')
+    net.get('h3').cmd('ip route add default via 10.0.30.254')
+    net.get('h6').cmd('ip route add default via 10.0.30.254')
+
+    # “Internet”-adres (8.8.8.8) simuleren op ISP
+    isp0.cmd('ip addr add 8.8.8.8/32 dev isp0-eth0')
+
+    print('*** NAT actief: edgeA gateways 10.0.x.254 en WAN 203.0.113.2/28 via 203.0.113.1')
+    print('*** Test: h1 ping 203.0.113.1  |  h1 ping 8.8.8.8  |  edgeA iptables -t nat -L -v')
+
     CLI(net)
     net.stop()
 
