@@ -62,6 +62,17 @@ class SDNTopo(Topo):
         self.addLink(ctrlA, a_core)  # ctrlA-eth0 <-> s1-eth4
         self.addLink(ctrlB, b_core)  # ctrlB-eth0 <-> s2-eth5
 
+ # -------- Edge-router en ISP-simulatie --------
+        edgeA = self.addHost('edgeA', ip='10.0.30.254/24')  # LAN-zijde (in VLAN30)
+        isp0 = self.addHost('isp0', ip='203.0.113.1/28')    # WAN-simulatie
+
+        # LAN naar VLAN30 (via A2-switch)
+        self.addLink(edgeA, a2)      # edgeA-eth0 <-> s4-eth3 (faucet: native_vlan vlan30)
+        # WAN naar ISP (buiten Faucet)
+        self.addLink(edgeA, isp0)    # edgeA-eth1 <-> isp0-eth0 (rechtstreeks)
+        # LAN naar VLANS
+        self.addLink(edgeA, a_core) # edgeA-eth2 <-> s1-eth5 (trunk voor VLAN10/20/30)
+
 
 def run():
     topo = SDNTopo()
