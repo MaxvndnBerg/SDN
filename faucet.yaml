@@ -11,25 +11,31 @@ meters:
       flags: [KBPS, BURST]
       bands:
         - type: DROP
-          rate: 10000
+          rate: 10000         # 10 Mbit/s
           burst_size: 1000
 
 # --- ACLs ---
 acls:
+  # Port security op VLAN30 (alleen h3/h6 toegestaan) — MACs van jouw hosts
   mngt_acl:
     - rule: { eth_src: "b2:be:ec:10:f8:d3", actions: { allow: true } }  # h3
     - rule: { eth_src: "1e:f0:bf:48:c8:57", actions: { allow: true } }  # h6
-    - rule: { actions: { allow: false } }
+    - rule: { actions: { allow: false } }                                # alles anders blokkeren
 
+  # Guest rate limit — nu met 'catch-all allow' zodat andere VLANs niet geblokkeerd worden
   guest_rl:
-    - rule: { vlan_vid: 20, actions: { meter: guest_10m, allow: true } }
-    - rule: { actions: { allow: true } }
+    - rule:
+        vlan_vid: 20
+        actions: { meter: guest_10m, allow: true }
+    - rule:
+        actions: { allow: true }   # alles wat geen VLAN20 is: doorlaten
 
 dps:
   s1:
     dp_id: 0x0000000000000001
     hardware: "Open vSwitch"
     interfaces:
+      # trunks naar access & darkfiber naar s2: ACL toepassen voor VLAN20-limiet
       1: { description: "to s3",             tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
       2: { description: "to s4",             tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
       3: { description: "to s2 (darkfiber)", tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
@@ -53,35 +59,32 @@ dps:
       1: { description: "to s1",         tagged_vlans: [vlan10, vlan20, vlan30] }            # trunk
       2: { description: "h1 employee",   native_vlan:  vlan10 }                               # host
       3: { description: "h2 guest",      native_vlan:  vlan20, acls_in: [guest_rl] }          # host + ACL
-      4: { description: "fanA uplink",   native_vlan:  vlan10 }                               # NEW: 250 hosts via fanA
 
   s4:   # A2 access (management)
     dp_id: 0x0000000000000004
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s1",         tagged_vlans: [vlan10, vlan20, vlan30] }
-      2: { description: "h3 management", native_vlan:  vlan30, acls_in: [mngt_acl] }
-      3: { description: "edgeA NAT-router", native_vlan: vlan30 }
+      1: { description: "to s1",         tagged_vlans: [vlan10, vlan20, vlan30] }            # trunk
+      2: { description: "h3 management", native_vlan:  vlan30, acls_in: [mngt_acl] }         # ACL mgmt
+      3: { description: "edgeA NAT-router", native_vlan: vlan30 } # Edge-router LAN poort
 
   s5:   # B1 access
     dp_id: 0x0000000000000005
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s2",         tagged_vlans: [vlan10, vlan20, vlan30] }
+      1: { description: "to s2",         tagged_vlans: [vlan10, vlan20, vlan30] }            # trunk
       2: { description: "h4 employee",   native_vlan:  vlan10 }
-      3: { description: "fanB uplink",   native_vlan:  vlan10 }                               # NEW: 250 hosts via fanB
 
   s6:   # B2 access
     dp_id: 0x0000000000000006
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s2",       tagged_vlans: [vlan10, vlan20, vlan30] }
-      2: { description: "h5 guest",    native_vlan:  vlan20, acls_in: [guest_rl] }
+      1: { description: "to s2",       tagged_vlans: [vlan10, vlan20, vlan30] }              # trunk
+      2: { description: "h5 guest",    native_vlan:  vlan20, acls_in: [guest_rl] }           # host + ACL
 
   s7:   # B3 access (management)
     dp_id: 0x0000000000000007
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s2",         tagged_vlans: [vlan10, vlan20, vlan30] }
-      2: { description: "h6 management", native_vlan:  vlan30, acls_in: [mngt_acl] }
-
+      1: { description: "to s2",         tagged_vlans: [vlan10, vlan20, vlan30] }            # trunk
+      2: { description: "h6 management", native_vlan:  vlan30, acls_in: [mngt_acl] }         # ACL mgmt
