@@ -62,7 +62,7 @@ class SDNTopo(Topo):
         self.addLink(ctrlA, a_core)  # ctrlA-eth0 <-> s1-eth4
         self.addLink(ctrlB, b_core)  # ctrlB-eth0 <-> s2-eth5
 
- # -------- Edge-router en ISP-simulatie --------
+        # -------- Edge-router en ISP-simulatie --------
         edgeA = self.addHost('edgeA', ip='10.0.30.254/24')  # LAN-zijde (in VLAN30)
         isp0 = self.addHost('isp0', ip='203.0.113.1/28')    # WAN-simulatie
 
@@ -70,8 +70,30 @@ class SDNTopo(Topo):
         self.addLink(edgeA, a2)      # edgeA-eth0 <-> s4-eth3 (faucet: native_vlan vlan30)
         # WAN naar ISP (buiten Faucet)
         self.addLink(edgeA, isp0)    # edgeA-eth1 <-> isp0-eth0 (rechtstreeks)
-        # LAN naar VLANS
-        self.addLink(edgeA, a_core) # edgeA-eth2 <-> s1-eth5 (trunk voor VLAN10/20/30)
+        # LAN naar VLANS (trunk)
+        self.addLink(edgeA, a_core)  # edgeA-eth2 <-> s1-eth5 (trunk voor VLAN10/20/30)
+
+        # -------- Schaalbaarheid: 500 extra employee hosts (VLAN10) --------
+        # We plaatsen 250 hosts achter een "fan-out bridge" in Gebouw A,
+        # en 250 hosts achter een "fan-out bridge" in Gebouw B.
+        # Elke fan-out is een Mininet host die binnen zijn namespace een Linux-bridge bouwt.
+        fanA = self.addHost('fanA', ip='0.0.0.0')  # fanout A (bridge-node)
+        fanB = self.addHost('fanB', ip='0.0.0.0')  # fanout B (bridge-node)
+
+        # Koppel fanout naar de access-switch:
+        #   - s3-eth4 (A) wordt in Faucet native VLAN10 (zie sdn2.txt update)
+        #   - s5-eth3 (B) wordt in Faucet native VLAN10
+        self.addLink(fanA, a1)  # fanA-eth0 <-> s3-eth4
+        self.addLink(fanB, b1)  # fanB-eth0 <-> s5-eth3
+
+        # Voeg 250 hosts achter fanA (h10..h259) en 250 achter fanB (h260..h509)
+        for i in range(10, 260):      # 250 hosts
+            h = self.addHost(f'h{i}', ip=f'10.0.10.{i % 254}/24')
+            self.addLink(h, fanA)     # h-eth0 <-> fanA-ethX
+
+        for i in range(260, 510):     # 250 hosts
+            h = self.addHost(f'h{i}', ip=f'10.0.10.{i % 254}/24')
+            self.addLink(h, fanB)     # h-eth0 <-> fanB-ethX
 
 
 def run():
@@ -82,7 +104,7 @@ def run():
     net.build()
     net.start()
 
-    # Forceer OpenFlow13 en één controller
+    # Forceer OpenFlow13 en één controller (alleen op s1..s7; fanA/fanB zijn hosts met Linux-bridge)
     for s in ['s1','s2','s3','s4','s5','s6','s7']:
         quietRun(f'ovs-vsctl del-controller {s}')
         quietRun(f'ovs-vsctl set-controller {s} tcp:127.0.0.1:6653')
@@ -103,7 +125,7 @@ def run():
     edgeA.cmd('ip link set edgeA-eth1 up')
     edgeA.cmd('ip route add default via 203.0.113.1')
 
-    # Interne kant (VLAN’s 10/20/30)
+    # Interne kant (VLAN’s 10/20/30 via trunk op edgeA-eth2)
     edgeA.cmd('ip link add link edgeA-eth2 name edgeA-eth2.10 type vlan id 10')
     edgeA.cmd('ip link add link edgeA-eth2 name edgeA-eth2.20 type vlan id 20')
     edgeA.cmd('ip link add link edgeA-eth2 name edgeA-eth2.30 type vlan id 30')
@@ -128,7 +150,7 @@ def run():
     edgeA.cmd('iptables -A FORWARD -i edgeA-eth2.30 -o edgeA-eth1 -j ACCEPT')
     edgeA.cmd('iptables -t nat -A POSTROUTING -o edgeA-eth1 -j MASQUERADE')
 
-    # Default gateways per VLAN
+    # Default gateways per VLAN voor de "kleine" hosts
     net.get('h1').cmd('ip route add default via 10.0.10.254')
     net.get('h4').cmd('ip route add default via 10.0.10.254')
     net.get('h2').cmd('ip route add default via 10.0.20.254')
@@ -136,11 +158,30 @@ def run():
     net.get('h3').cmd('ip route add default via 10.0.30.254')
     net.get('h6').cmd('ip route add default via 10.0.30.254')
 
+    # -------- Fan-out bridges opzetten (Linux-bridge in fanA en fanB) --------
+    fanA = net.get('fanA')
+    fanB = net.get('fanB')
+
+    # helper om alle fanX-interfaces (behalve lo) in een bridge te hangen
+    def build_bridge(node, br_name):
+        node.cmd(f'ip link add name {br_name} type bridge')
+        # alle interfaces ophalen
+        intfs = [str(i) for i in node.intfList() if str(i) != 'lo']
+        # zet ze up en in de bridge
+        for intf in intfs:
+            node.cmd(f'ip link set dev {intf} up')
+            node.cmd(f'ip link set dev {intf} master {br_name}')
+        node.cmd(f'ip link set dev {br_name} up')
+
+    build_bridge(fanA, 'brA')
+    build_bridge(fanB, 'brB')
+
     # “Internet”-adres (8.8.8.8) simuleren op ISP
     isp0.cmd('ip addr add 8.8.8.8/32 dev isp0-eth0')
 
     print('*** NAT actief: edgeA gateways 10.0.x.254 en WAN 203.0.113.2/28 via 203.0.113.1')
-    print('*** Test: h1 ping 203.0.113.1  |  h1 ping 8.8.8.8  |  edgeA iptables -t nat -L -v')
+    print('*** 500 hosts toegevoegd (VLAN10: h10..h259 via fanA, h260..h509 via fanB)')
+    print('*** Test: h10 ping 203.0.113.1  |  h260 ping 203.0.113.1  |  pingall (kan even duren)')
 
     CLI(net)
     net.stop()
@@ -149,3 +190,4 @@ def run():
 if __name__ == '__main__':
     setLogLevel('info')
     run()
+
