@@ -1,90 +1,98 @@
+version: 2
+
 vlans:
-  vlan10: { vid: 10, description: "Employee" }
-  vlan20: { vid: 20, description: "Guest" }
-  vlan30: { vid: 30, description: "Management" }
+  vlan10:
+    vid: 10
+    description: "Employee"
 
-# --- Meter voor ACL rate limiting (10 Mbit/s) ---
-meters:
-  guest_10m:
-    meter_id: 1
-    entry:
-      flags: [KBPS, BURST]
-      bands:
-        - type: DROP
-          rate: 10000         # 10 Mbit/s
-          burst_size: 1000
+  vlan20:
+    vid: 20
+    description: "Guest"
+    acl_in: guest_isolation
 
-# --- ACLs ---
+  vlan30:
+    vid: 30
+    description: "Management"
+
+  vlan100:
+    vid: 100
+    description: "Controller-Mgmt (optioneel)"
+
 acls:
-  # Port security op VLAN30 (alleen h3/h6 toegestaan) — MACs van jouw hosts
-  mngt_acl:
-    - rule: { eth_src: "b2:be:ec:10:f8:d3", actions: { allow: true } }  # h3
-    - rule: { eth_src: "1e:f0:bf:48:c8:57", actions: { allow: true } }  # h6
-    - rule: { actions: { allow: false } }                                # alles anders blokkeren
-
-  # Guest rate limit — nu met 'catch-all allow' zodat andere VLANs niet geblokkeerd worden
-  guest_rl:
+  guest_isolation:
+    # Blokkeer verkeer binnen hetzelfde guest-subnet (IPv4)
     - rule:
-        vlan_vid: 20
-        actions: { meter: guest_10m, allow: true }
+        dl_type: 0x0800
+        nw_src: 10.0.20.0/24
+        nw_dst: 10.0.20.0/24
+        actions:
+          allow: 0
+    # Blokkeer verkeer binnen hetzelfde guest-subnet (IPv6)
     - rule:
-        actions: { allow: true }   # alles wat geen VLAN20 is: doorlaten
+        dl_type: 0x86DD
+        ipv6_src: 2001:db8:20::/64
+        ipv6_dst: 2001:db8:20::/64
+        actions:
+          allow: 0
+    # Sta al het overige verkeer toe (richting edgeA/ISP)
+    - rule:
+        actions:
+          allow: 1
 
 dps:
   s1:
-    dp_id: 0x0000000000000001
+    dp_id: 0x1
     hardware: "Open vSwitch"
     interfaces:
-      # trunks naar access & darkfiber naar s2: ACL toepassen voor VLAN20-limiet
-      1: { description: "to s3",             tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
-      2: { description: "to s4",             tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
-      3: { description: "to s2 (darkfiber)", tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
-      4: { description: "ctrlA",             native_vlan:  vlan30 }
-      5: { description: "to edgeA (router)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      1: { description: "to s3 (A1)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "to s4 (A2)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      3: { description: "to s2 (darkfiber)", tagged_vlans: [vlan10, vlan20, vlan30, vlan100] }
+      4: { description: "ctrlA", native_vlan: vlan100 }
+      5: { description: "to edgeA-eth2", tagged_vlans: [vlan10, vlan20, vlan30] }
 
   s2:
-    dp_id: 0x0000000000000002
+    dp_id: 0x2
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s5", tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
-      2: { description: "to s6", tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
-      3: { description: "to s7", tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
-      4: { description: "to s1 (darkfiber)", tagged_vlans: [vlan10, vlan20, vlan30], acls_in: [guest_rl] }
-      5: { description: "ctrlB", native_vlan:  vlan30 }
+      1: { description: "to s5 (B1)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "to s6 (B2)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      3: { description: "to s7 (B3)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      4: { description: "to s1 (darkfiber)", tagged_vlans: [vlan10, vlan20, vlan30, vlan100] }
+      5: { description: "ctrlB", native_vlan: vlan100 }
 
-  s3:   # A1 access
-    dp_id: 0x0000000000000003
+  s3:
+    dp_id: 0x3
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s1",         tagged_vlans: [vlan10, vlan20, vlan30] }            # trunk
-      2: { description: "h1 employee",   native_vlan:  vlan10 }                               # host
-      3: { description: "h2 guest",      native_vlan:  vlan20, acls_in: [guest_rl] }          # host + ACL
+      1: { description: "uplink to s1", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h1", native_vlan: vlan10 }
+      3: { description: "h2", native_vlan: vlan20 }
 
-  s4:   # A2 access (management)
-    dp_id: 0x0000000000000004
+  s4:
+    dp_id: 0x4
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s1",         tagged_vlans: [vlan10, vlan20, vlan30] }            # trunk
-      2: { description: "h3 management", native_vlan:  vlan30, acls_in: [mngt_acl] }         # ACL mgmt
-      3: { description: "edgeA NAT-router", native_vlan: vlan30 } # Edge-router LAN poort
+      1: { description: "uplink to s1", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h3", native_vlan: vlan30 }
+      3: { description: "edgeA-eth0 (mgmt)", native_vlan: vlan30 }
 
-  s5:   # B1 access
-    dp_id: 0x0000000000000005
+  s5:
+    dp_id: 0x5
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s2",         tagged_vlans: [vlan10, vlan20, vlan30] }            # trunk
-      2: { description: "h4 employee",   native_vlan:  vlan10 }
+      1: { description: "uplink to s2", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h4", native_vlan: vlan10 }
 
-  s6:   # B2 access
-    dp_id: 0x0000000000000006
+  s6:
+    dp_id: 0x6
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s2",       tagged_vlans: [vlan10, vlan20, vlan30] }              # trunk
-      2: { description: "h5 guest",    native_vlan:  vlan20, acls_in: [guest_rl] }           # host + ACL
+      1: { description: "uplink to s2", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h5", native_vlan: vlan20 }
 
-  s7:   # B3 access (management)
-    dp_id: 0x0000000000000007
+  s7:
+    dp_id: 0x7
     hardware: "Open vSwitch"
     interfaces:
-      1: { description: "to s2",         tagged_vlans: [vlan10, vlan20, vlan30] }            # trunk
-      2: { description: "h6 management", native_vlan:  vlan30, acls_in: [mngt_acl] }         # ACL mgmt
+      1: { description: "uplink to s2", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h6", native_vlan: vlan30 }
