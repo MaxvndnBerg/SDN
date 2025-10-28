@@ -82,6 +82,12 @@ def run():
     net.build()
     net.start()
 
+    isp0 = net.get('isp0')
+    # een korte wacht kan helpen, maar 'replace' is meestal genoeg
+    isp0.cmd('ip -6 route replace 2001:db8:10::/64 via 2001:db8:ffff::2')
+    isp0.cmd('ip -6 route replace 2001:db8:20::/64 via 2001:db8:ffff::2')
+    isp0.cmd('ip -6 route replace 2001:db8:30::/64 via 2001:db8:ffff::2')
+
     # Forceer OpenFlow13 en één controller
     for s in ['s1','s2','s3','s4','s5','s6','s7']:
         quietRun(f'ovs-vsctl del-controller {s}')
@@ -127,6 +133,14 @@ def run():
     edgeA.cmd('ip link set edgeA-eth2.20 up')
     edgeA.cmd('ip link set edgeA-eth2.30 up')
 
+    #Zet IPv6 forwarding HIER aan (nu bestaan de interfaces pas echt)
+    edgeA.cmd('sysctl -w net.ipv6.conf.all.forwarding=1')
+    edgeA.cmd('sysctl -w net.ipv6.conf.edgeA-eth1.forwarding=1')
+    edgeA.cmd('sysctl -w net.ipv6.conf.edgeA-eth2.forwarding=1')
+    edgeA.cmd('sysctl -w net.ipv6.conf.edgeA-eth2.10.forwarding=1')
+    edgeA.cmd('sysctl -w net.ipv6.conf.edgeA-eth2.20.forwarding=1')
+    edgeA.cmd('sysctl -w net.ipv6.conf.edgeA-eth2.30.forwarding=1')
+
     # IP forwarding
     edgeA.cmd('sysctl -w net.ipv4.ip_forward=1')
     edgeA.cmd('sysctl -w net.ipv6.conf.all.forwarding=1')
@@ -153,6 +167,7 @@ def run():
     edgeA.cmd('ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT')
     edgeA.cmd('ip6tables -A INPUT -i lo -j ACCEPT')
     edgeA.cmd('ip6tables -A INPUT -p ipv6-icmp -j ACCEPT')
+    edgeA.cmd('ip6tables -A FORWARD -p ipv6-icmp -j ACCEPT')
 
     # LAN ▒^f^r WAN (v4 + v6)
     for vid in ['10','20','30']:
