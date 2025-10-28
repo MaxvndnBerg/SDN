@@ -73,7 +73,6 @@ class SDNTopo(Topo):
         # LAN naar VLANS (trunk)
         self.addLink(edgeA, a_core)
 
-
 def run():
     topo = SDNTopo()
     net = Mininet(topo=topo, switch=OVSSwitch, build=False, controller=None)
@@ -115,6 +114,35 @@ def run():
     edgeA.cmd('ip route add default via 203.0.113.1')
     edgeA.cmd('ip -6 route add default via 2001:db8:ffff::1')
 
+    import time
+
+    # --- Robust wait: ensure WAN ifaces are really up & IPv6 DAD finished ---
+    def wait_iface_ready(node, ifname, timeout=6.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            link = node.cmd(f'ip link show {ifname}')
+            addr = node.cmd(f'ip -6 addr show dev {ifname}')
+            if 'state UP' in link and 'tentative' not in addr:
+                return True
+            time.sleep(0.2)
+        return False
+
+    # Wait for both WAN ends
+    wait_iface_ready(edgeA, 'edgeA-eth1')
+    wait_iface_ready(isp0,  'isp0-eth0')
+
+    # --- Stabilize IPv6 WAN link (edgeA <-> isp0) ---
+    # Zorg dat default route bestaat (wordt soms niet actief bij herstart)
+    edgeA.cmd('ip -6 route replace default via 2001:db8:ffff::1 dev edgeA-eth1')
+
+    # Flush oude NDP entries aan beide kanten (voorkomt "Address unreachable" direct na start)
+    edgeA.cmd('ip -6 neigh flush all')
+    isp0.cmd('ip -6 neigh flush all')
+
+    # 1 korte "warm-up" ping aan beide kanten om NDP direct op te bouwen
+    edgeA.cmd('ping6 -c1 -W1 2001:db8:ffff::1 || true')
+    isp0.cmd('ping6 -c1 -W1 2001:db8:ffff::2 || true')
+
     # VLAN-subinterfaces
     edgeA.cmd('ip link add link edgeA-eth2 name edgeA-eth2.10 type vlan id 10')
     edgeA.cmd('ip link add link edgeA-eth2 name edgeA-eth2.20 type vlan id 20')
@@ -132,6 +160,44 @@ def run():
     edgeA.cmd('ip link set edgeA-eth2.10 up')
     edgeA.cmd('ip link set edgeA-eth2.20 up')
     edgeA.cmd('ip link set edgeA-eth2.30 up')
+
+    # --- IPv6 routing/iptables ---
+    # Forwarding nogmaals expliciet per interface (nu ze bestaan)
+    edgeA.cmd('sysctl -w net.ipv6.conf.all.forwarding=1')
+    for iface in ['edgeA-eth1','edgeA-eth2','edgeA-eth2.10','edgeA-eth2.20','edgeA-eth2.30']:
+        edgeA.cmd(f"sysctl -w net.ipv6.conf.{iface}.forwarding=1 || true")
+
+    # Schone ip6tables + policies
+    edgeA.cmd('ip6tables -F')
+    edgeA.cmd('ip6tables -P INPUT DROP')
+    edgeA.cmd('ip6tables -P OUTPUT ACCEPT')
+    edgeA.cmd('ip6tables -P FORWARD ACCEPT')
+
+    # Basis INPUT (NDP/PMTU/established)
+    edgeA.cmd('ip6tables -A INPUT -i lo -j ACCEPT')
+    edgeA.cmd('ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT')
+    edgeA.cmd('ip6tables -A INPUT -p ipv6-icmp -j ACCEPT')
+
+    # LAN -> WAN toestaan (IPv6)
+    for vid in ['10','20','30']:
+        edgeA.cmd(f'ip6tables -A FORWARD -i edgeA-eth2.{vid} -o edgeA-eth1 -j ACCEPT')
+
+    # Retourverkeer WAN -> LAN
+    for vid in ['10','20','30']:
+        edgeA.cmd(f'ip6tables -A FORWARD -i edgeA-eth1 -o edgeA-eth2.{vid} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT')
+
+    # ICMPv6 altijd doorlaten in FORWARD (NDP/PMTU)
+    edgeA.cmd('ip6tables -A FORWARD -p ipv6-icmp -j ACCEPT')
+
+    # --- FIX voor VLAN30 NAT / rp_filter probleem ---
+    # edgeA-eth0 (oude mgmt-interface) uitschakelen om routingconflict te voorkomen
+    edgeA.cmd('ip addr flush dev edgeA-eth0')
+    edgeA.cmd('ip link set edgeA-eth0 down')
+
+    # Reverse-path filtering uitschakelen (anders dropt Linux NAT-verkeer met andere bron)
+    edgeA.cmd('sysctl -w net.ipv4.conf.all.rp_filter=0')
+    edgeA.cmd('sysctl -w net.ipv4.conf.edgeA-eth1.rp_filter=0')
+    edgeA.cmd('sysctl -w net.ipv4.conf.edgeA-eth2.30.rp_filter=0')
 
     #Zet IPv6 forwarding HIER aan (nu bestaan de interfaces pas echt)
     edgeA.cmd('sysctl -w net.ipv6.conf.all.forwarding=1')
@@ -169,18 +235,22 @@ def run():
     edgeA.cmd('ip6tables -A INPUT -p ipv6-icmp -j ACCEPT')
     edgeA.cmd('ip6tables -A FORWARD -p ipv6-icmp -j ACCEPT')
 
-    # LAN ▒^f^r WAN (v4 + v6)
+    # LAN ▒^v^r^f^r WAN (v4 + v6)
     for vid in ['10','20','30']:
         edgeA.cmd(f'iptables -A FORWARD -i edgeA-eth2.{vid} -o edgeA-eth1 -j ACCEPT')
         edgeA.cmd(f'ip6tables -A FORWARD -i edgeA-eth2.{vid} -o edgeA-eth1 -j ACCEPT')
-    
+
     edgeA.cmd('ip6tables -A FORWARD -p ipv6-icmp -j ACCEPT')
     for vid in ['10','20','30']:
         edgeA.cmd(f'ip6tables -A FORWARD -i edgeA-eth1 -o edgeA-eth2.{vid} -p ipv6-icmp -j ACCEPT')
-        
+
     # Retourverkeer toestaan
     edgeA.cmd('iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT')
     edgeA.cmd('ip6tables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT')
+
+    # Extra retourverkeerregels specifiek voor VLAN30 ▒^f^t WAN
+    edgeA.cmd('iptables -A FORWARD -i edgeA-eth2.30 -o edgeA-eth1 -j ACCEPT')
+    edgeA.cmd('iptables -A FORWARD -i edgeA-eth1 -o edgeA-eth2.30 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT')
 
     # Inter-VLAN blokkeren
     edgeA.cmd('iptables -A FORWARD -i edgeA-eth2.10 -o edgeA-eth2.20 -j DROP')
@@ -233,7 +303,6 @@ def run():
 
     CLI(net)
     net.stop()
-
 
 if __name__ == '__main__':
     setLogLevel('info')
