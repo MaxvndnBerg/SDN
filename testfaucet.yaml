@@ -47,10 +47,10 @@ acls:
         actions:
           allow: 1
     - rule:
-        eth_type: 0x86DD
-        ipv6_dst: 2001:db8:20::1/128
+        eth_type: 0x0800
+        nw_src: 10.0.20.254/32
         actions:
-          allow: 1
+           allow: 1
     - rule:
         eth_type: 0x0800
         nw_src: 10.0.20.0/24
@@ -59,10 +59,20 @@ acls:
           allow: 0
     - rule:
         eth_type: 0x86DD
+        ipv6_dst: 2001:db8:20::1/128
+        actions:
+          allow: 1
+    - rule:
+        eth_type: 0x86DD
+        ipv6_src: 2001:db8:20::1/128
+        actions:
+          allow: 1
+    - rule:
+        eth_type: 0x86DD
         ipv6_src: 2001:db8:20::/64
         ipv6_dst: 2001:db8:20::/64
         actions:
-          allow: 0
+           allow: 0
     - rule:
         actions:
           allow: 1
