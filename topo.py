@@ -173,7 +173,11 @@ def run():
     for vid in ['10','20','30']:
         edgeA.cmd(f'iptables -A FORWARD -i edgeA-eth2.{vid} -o edgeA-eth1 -j ACCEPT')
         edgeA.cmd(f'ip6tables -A FORWARD -i edgeA-eth2.{vid} -o edgeA-eth1 -j ACCEPT')
-
+    
+    edgeA.cmd('ip6tables -A FORWARD -p ipv6-icmp -j ACCEPT')
+    for vid in ['10','20','30']:
+        edgeA.cmd(f'ip6tables -A FORWARD -i edgeA-eth1 -o edgeA-eth2.{vid} -p ipv6-icmp -j ACCEPT')
+        
     # Retourverkeer toestaan
     edgeA.cmd('iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT')
     edgeA.cmd('ip6tables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT')
