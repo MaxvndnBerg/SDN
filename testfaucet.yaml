@@ -1,0 +1,127 @@
+version: 2
+
+vlans:
+  vlan10:
+    vid: 10
+    description: "Employee"
+  vlan20:
+    vid: 20
+    description: "Guest"
+    acl_in: guest_isolation
+  vlan30:
+    vid: 30
+    description: "Management"
+  vlan100:
+    vid: 100
+    description: "Controller-Mgmt (optioneel)"
+
+acls:
+  guest_isolation:
+    - rule:
+        eth_type: 0x0806
+        actions:
+          allow: 1     # ARP
+    - rule:
+        eth_type: 0x86DD
+        icmpv6_type: 133
+        actions:
+          allow: 1     # RS
+    - rule:
+        eth_type: 0x86DD
+        icmpv6_type: 134
+        actions:
+          allow: 1     # RA
+    - rule:
+        eth_type: 0x86DD
+        icmpv6_type: 135
+        actions:
+          allow: 1     # NS
+    - rule:
+        eth_type: 0x86DD
+        icmpv6_type: 136
+        actions:
+          allow: 1     # NA
+    - rule:
+        eth_type: 0x0800
+        nw_dst: 10.0.20.254/32
+        actions:
+          allow: 1
+    - rule:
+        eth_type: 0x86DD
+        ipv6_dst: 2001:db8:20::1/128
+        actions:
+          allow: 1
+    - rule:
+        eth_type: 0x0800
+        nw_src: 10.0.20.0/24
+        nw_dst: 10.0.20.0/24
+        actions:
+          allow: 0
+    - rule:
+        eth_type: 0x86DD
+        ipv6_src: 2001:db8:20::/64
+        ipv6_dst: 2001:db8:20::/64
+        actions:
+          allow: 0
+    - rule:
+        actions:
+          allow: 1
+
+dps:
+  s1:
+    dp_id: 0x1
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "to s3 (A1)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "to s4 (A2)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      3: { description: "to s2 (darkfiber)", tagged_vlans: [vlan10, vlan20, vlan30, vlan100] }
+      4: { description: "ctrlA", native_vlan: vlan100 }
+      5: { description: "to edgeA-eth2", tagged_vlans: [vlan10, vlan20, vlan30] }
+
+  s2:
+    dp_id: 0x2
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "to s6 (B1)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "to s7 (B2)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      3: { description: "to s5 (B3)", tagged_vlans: [vlan10, vlan20, vlan30] }
+      4: { description: "to s1 (darkfiber)", tagged_vlans: [vlan10, vlan20, vlan30, vlan100] }
+      5: { description: "ctrlB", native_vlan: vlan100 }
+
+  s3:
+    dp_id: 0x3
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "uplink to s1", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h1", native_vlan: vlan10 }
+      3: { description: "h2", native_vlan: vlan20 }
+
+  s4:
+    dp_id: 0x4
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "uplink to s1", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h3", native_vlan: vlan30 }
+      3: { description: "edgeA-eth0", native_vlan: vlan30 }
+
+  s5:
+    dp_id: 0x5
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "uplink to s2", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h4", native_vlan: vlan10 }
+
+  s6:
+    dp_id: 0x6
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "uplink to s2", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h5", native_vlan: vlan20 }
+
+  s7:
+    dp_id: 0x7
+    hardware: "Open vSwitch"
+    interfaces:
+      1: { description: "uplink to s2", tagged_vlans: [vlan10, vlan20, vlan30] }
+      2: { description: "h6", native_vlan: vlan30 }
+
